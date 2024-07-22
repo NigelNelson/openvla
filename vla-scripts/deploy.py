@@ -20,7 +20,7 @@ import numpy as np
 
 action = requests.post(
     "http://0.0.0.0:8000/act",
-    json={"image": np.zeros((256, 256, 3), dtype=np.uint8), "instruction": "do something"}
+    json={"image": np.zeros((256, 256, 3), dtype=np.uint8), "instruction": "do something", "unnorm_key": "needle_dataset2"}
 ).json()
 
 Note that if your server is not accessible on the open web, you can use ngrok, or forward ports to your client via ssh:
@@ -47,6 +47,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from PIL import Image
 from transformers import AutoModelForVision2Seq, AutoProcessor
+from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 
 # === Utilities ===
 SYSTEM_PROMPT = (
@@ -64,7 +65,7 @@ def get_openvla_prompt(instruction: str, openvla_path: Union[str, Path]) -> str:
 
 # === Server Interface ===
 class OpenVLAServer:
-    def __init__(self, openvla_path: Union[str, Path], attn_implementation: Optional[str] = "flash_attention_2") -> Path:
+    def __init__(self, openvla_path: Union[str, Path],  adapter_path: Union[str, Path], attn_implementation: Optional[str] = "flash_attention_2") -> Path:
         """
         A simple server for OpenVLA models; exposes `/act` to predict an action for a given image + instruction.
             => Takes in {"image": np.ndarray, "instruction": str, "unnorm_key": Optional[str]}
@@ -82,7 +83,12 @@ class OpenVLAServer:
             low_cpu_mem_usage=True,
             trust_remote_code=True,
         ).to(self.device)
-
+        # current_dir = os.path.dirname(os.path.realpath(__file__))
+        # with open(os.path.join(current_dir, "norm.json"), "r") as f:
+        #     vla.norm_stats = json.load(f)
+        # self.vla = PeftModel.from_pretrained(vla, adapter_path).to(self.device)
+        # get current directory
+        # print(self.vla.norm_stats)
         # [Hacky] Load Dataset Statistics from Disk (if passing a path to a fine-tuned model)
         if os.path.isdir(self.openvla_path):
             with open(Path(self.openvla_path) / "dataset_statistics.json", "r") as f:
@@ -126,8 +132,8 @@ class OpenVLAServer:
 @dataclass
 class DeployConfig:
     # fmt: off
-    openvla_path: Union[str, Path] = "openvla/openvla-7b"               # HF Hub Path (or path to local run directory)
-
+    openvla_path: Union[str, Path] = "/media/models/OpenVLA/step-250_accuracy-0.9464/step-500_accuracy-0.9375/step-1500_accuracy-0.98/openvla-7b+needle_dataset2+b16+lr-0.0005+lora-r32+dropout-0.0/openvla-7b+needle_dataset2+b16+lr-0.0005+lora-r32+dropout-0.0"               # HF Hub Path (or path to local run directory)
+    adapter_path: Union[str, Path] = "/media/models/OpenVLA"   
     # Server Configuration
     host: str = "0.0.0.0"                                               # Host IP Address
     port: int = 8000                                                    # Host Port
@@ -137,7 +143,7 @@ class DeployConfig:
 
 @draccus.wrap()
 def deploy(cfg: DeployConfig) -> None:
-    server = OpenVLAServer(cfg.openvla_path)
+    server = OpenVLAServer(cfg.openvla_path, cfg.adapter_path)
     server.run(cfg.host, port=cfg.port)
 
 
